@@ -11,7 +11,7 @@ try:
     api_key = st.secrets["openrouter_api_key"]
     model_name = st.secrets["openrouter_model"]
 except KeyError:
-    st.error("❌ API key or model name is missing from Streamlit secrets. Please check `.streamlit/secrets.toml` or Streamlit Cloud settings.")
+    st.error("❌ API key or model name is missing from secrets.")
     st.stop()
 
 api_base = "https://openrouter.ai/api/v1"
@@ -20,17 +20,17 @@ headers = {
     "Content-Type": "application/json"
 }
 
-# ========== Simulated Login ==========
+# ========== Login ==========
 def login_section():
-    st.sidebar.subheader("🔐 Simulated Login")
-    email = st.sidebar.text_input("Enter your email")
-    password = st.sidebar.text_input("Enter your password", type="password")
+    st.sidebar.subheader("🔐 Login")
+    email = st.sidebar.text_input("Email")
+    password = st.sidebar.text_input("Password", type="password")
     if st.sidebar.button("Login"):
         if email and password:
             st.session_state['user'] = {"email": email}
             st.success(f"✅ Logged in as {email}")
         else:
-            st.error("❌ Please enter both email and password")
+            st.error("❌ Enter both email and password")
 
 # ========== Portfolio Allocation ==========
 def get_portfolio_allocation(risk):
@@ -40,44 +40,41 @@ def get_portfolio_allocation(risk):
         "High": {"Equity": 70, "Debt": 20, "Gold": 10}
     }[risk]
 
-# ========== GPT Portfolio Explanation (with error handling) ==========
+# ========== GPT Portfolio Explanation ==========
 def explain_portfolio(allocation, age, risk, goal):
-    prompt = f"""
-    Act like a professional financial advisor. Explain this portfolio allocation for a {age}-year-old user with {risk} risk tolerance and goal: {goal}.
-    The allocation is: Equity: {allocation['Equity']}%, Debt: {allocation['Debt']}%, Gold: {allocation['Gold']}%."""
-    
-    payload = {
-        "model": model_name,
-        "messages": [
-            {"role": "system", "content": "You are a helpful financial advisor."},
-            {"role": "user", "content": prompt}
-        ]
-    }
+    prompt = f"""Act as a certified financial advisor. Explain a portfolio for a {age}-year-old user with {risk} risk tolerance and goal: {goal}.
+    Allocation: Equity {allocation['Equity']}%, Debt {allocation['Debt']}%, Gold {allocation['Gold']}%."""
 
     try:
-        response = requests.post(f"{api_base}/chat/completions", headers=headers, json=payload)
-        response_json = response.json()
-        return response_json["choices"][0]["message"]["content"]
+        response = requests.post(
+            f"{api_base}/chat/completions",
+            headers=headers,
+            json={
+                "model": model_name,
+                "messages": [
+                    {"role": "system", "content": "You are a helpful financial advisor."},
+                    {"role": "user", "content": prompt}
+                ]
+            }
+        )
+        data = response.json()
+        return data["choices"][0]["message"]["content"]
     except Exception as e:
-        st.error("❌ Failed to get a valid response from the AI model.")
-        st.code(response.text)
-        return "⚠️ Unable to generate portfolio explanation due to a system error."
+        st.warning("⚠️ Could not connect to OpenRouter. Showing fallback response.")
+        return "Based on your risk tolerance and age, a diversified portfolio of equity, debt, and gold is recommended. Equity provides high returns, debt ensures safety, and gold adds stability."
 
-# ========== CAGR Fetcher ==========
+# ========== CAGR ==========
 def fetch_cagr(ticker, years=5):
     try:
         end = datetime.now()
         start = end - timedelta(days=years * 365)
         data = yf.download(ticker, start=start, end=end, progress=False)
-        if data.empty or "Adj Close" not in data:
-            st.warning(f"No data for {ticker}")
+        if data.empty:
             return None
         start_price = data["Adj Close"].iloc[0]
         end_price = data["Adj Close"].iloc[-1]
-        cagr = ((end_price / start_price) ** (1 / years)) - 1
-        return round(cagr * 100, 2)
-    except Exception as e:
-        st.error(f"Error fetching CAGR for {ticker}: {e}")
+        return round(((end_price / start_price) ** (1 / years) - 1) * 100, 2)
+    except:
         return None
 
 # ========== PDF Report ==========
@@ -90,10 +87,10 @@ def generate_pdf(name, age, income, risk, goal, allocation, explanation, mip_inf
 
     pdf.ln(10)
     pdf.cell(200, 10, f"Name: {name} | Age: {age} | Income: ₹{income:,}", ln=True)
-    pdf.cell(200, 10, f"Risk Tolerance: {risk} | Goal: {goal}", ln=True)
+    pdf.cell(200, 10, f"Risk: {risk} | Goal: {goal}", ln=True)
 
     pdf.ln(10)
-    pdf.cell(200, 10, txt="Portfolio Allocation:", ln=True)
+    pdf.cell(200, 10, txt="Allocation:", ln=True)
     for asset, percent in allocation.items():
         pdf.cell(200, 10, f"{asset}: {percent}%", ln=True)
 
@@ -102,97 +99,74 @@ def generate_pdf(name, age, income, risk, goal, allocation, explanation, mip_inf
 
     if mip_info:
         pdf.ln(5)
-        pdf.multi_cell(0, 10, f"\nMonthly Investment Plan:\n"
-                              f"Target: ₹{mip_info['future_value']}\n"
-                              f"Invest ₹{mip_info['monthly']:,}/month for {mip_info['years']} years "
-                              f"at {mip_info['rate']}% expected return.")
+        pdf.multi_cell(0, 10, f"Investment Plan:\nTarget: ₹{mip_info['future_value']:,}\n"
+                              f"Monthly: ₹{mip_info['monthly']:,} for {mip_info['years']} years at {mip_info['rate']}%.")
 
     pdf.output("/mnt/data/wealth_report.pdf")
 
-# ========== Streamlit App ==========
+# ========== Streamlit UI ==========
 st.set_page_config(page_title="GenAI Wealth Advisor", page_icon="💼")
-st.title("💼 GenAI-Based Wealth Advisor Chatbot")
+st.title("💼 GenAI Wealth Advisor")
 
 login_section()
 if 'user' not in st.session_state:
     st.stop()
 
-# ========== User Profile Inputs ==========
-st.subheader("👤 Profile Details")
+st.subheader("👤 Your Profile")
 age = st.slider("Age", 18, 70, 30)
 income = st.number_input("Monthly Income (₹)", value=50000)
-risk_tolerance = st.selectbox("Risk Tolerance", ["Low", "Medium", "High"])
-goal = st.text_input("Primary Goal (e.g., retirement, house)")
+risk = st.selectbox("Risk Tolerance", ["Low", "Medium", "High"])
+goal = st.text_input("Financial Goal")
 
 if st.button("🔍 Generate Portfolio"):
-    allocation = get_portfolio_allocation(risk_tolerance)
-
-    fig = px.pie(
-        names=list(allocation.keys()),
-        values=list(allocation.values()),
-        title="Your Investment Allocation",
-        color_discrete_sequence=px.colors.sequential.RdBu
-    )
+    allocation = get_portfolio_allocation(risk)
+    fig = px.pie(names=list(allocation.keys()), values=list(allocation.values()), title="Portfolio Allocation")
     st.plotly_chart(fig)
 
-    explanation = explain_portfolio(allocation, age, risk_tolerance, goal)
+    explanation = explain_portfolio(allocation, age, risk, goal)
     st.markdown("### 📘 Advisor's Explanation")
     st.write(explanation)
 
-    # ========== Monthly Investment Plan ==========
-    st.subheader("📈 Monthly Investment Plan")
-    rate = st.slider("Expected Annual Return (%)", 6.0, 15.0, 12.0)
-    years = st.slider("Investment Duration (Years)", 1, 40, 10)
+    st.subheader("📈 Monthly SIP Plan")
+    rate = st.slider("Expected Return (%)", 6.0, 15.0, 12.0)
+    years = st.slider("Duration (Years)", 1, 40, 10)
+    target = st.number_input("Target Corpus (₹)", value=5000000)
+
     months = years * 12
     monthly_rate = rate / 100 / 12
-
-    target = st.number_input("Target Corpus (₹)", value=4500000)
-    monthly = target * monthly_rate / ((1 + monthly_rate) ** months - 1)
-    monthly = round(monthly)
-    st.success(f"To reach ₹{target:,} in {years} years at {rate}% return, invest ₹{monthly:,}/month.")
+    monthly = round(target * monthly_rate / ((1 + monthly_rate) ** months - 1))
+    st.success(f"Invest ₹{monthly:,}/month to reach ₹{target:,} in {years} years.")
 
     mip_info = {
-        "mode": "goal",
         "monthly": monthly,
         "years": years,
         "rate": rate,
         "future_value": target
     }
 
-    # ========== Real-Time CAGR ==========
-    st.subheader("📉 Real-Time Return Estimates")
-    st.caption("Tickers Used: NIFTYBEES (Equity), SBIETF10Y (Debt), GOLDBEES (Gold)")
-
+    st.subheader("📉 Real-Time CAGR Estimates")
     returns = {
         "Equity": fetch_cagr("NIFTYBEES.NS"),
-        "Debt": fetch_cagr("SBIETF10Y.NS"),
+        "Debt": fetch_cagr("ICICILIQ.NS"),
         "Gold": fetch_cagr("GOLDBEES.NS")
     }
 
-    df = pd.DataFrame({
-        "Asset": list(returns.keys()),
-        "CAGR (%)": list(returns.values())
-    })
-
+    df = pd.DataFrame({"Asset": list(returns.keys()), "CAGR (%)": list(returns.values())})
     st.dataframe(df)
 
-    valid_cagrs = [r for r in returns.values() if r is not None]
-    if valid_cagrs:
-        avg = round(sum(valid_cagrs) / len(valid_cagrs), 2)
-        st.info(f"📊 Average CAGR across assets: {avg}%")
+    valid = [v for v in returns.values() if v is not None]
+    if valid:
+        st.info(f"Average CAGR: {round(sum(valid)/len(valid),2)}%")
     else:
-        st.error("❌ Unable to fetch CAGR data. Please check internet connection or tickers.")
+        st.warning("❗ Could not fetch CAGR data. You may be offline or tickers are invalid.")
 
-    # ========== PDF ==========
     if st.button("📄 Generate PDF Report"):
-        generate_pdf("User", age, income, risk_tolerance, goal, allocation, explanation, mip_info)
+        generate_pdf("User", age, income, risk, goal, allocation, explanation, mip_info)
         st.download_button("📥 Download PDF", open("/mnt/data/wealth_report.pdf", "rb"), "Wealth_Report.pdf")
 
-    # ========== Feedback ==========
-    st.subheader("⭐ Rate Your Experience")
-    rating = st.selectbox("How would you rate this output?", ["Select", "Excellent", "Good", "Average", "Poor"])
-    if rating != "Select":
-        st.success("🎉 Thank you for your feedback! You may restart the app now.")
+    st.subheader("⭐ Feedback")
+    if st.selectbox("Rate the experience", ["Select", "Excellent", "Good", "Average", "Poor"]) != "Select":
+        st.success("Thanks for your feedback!")
         if st.button("🔄 Restart"):
             st.session_state.clear()
             st.experimental_rerun()
