@@ -7,8 +7,13 @@ from fpdf import FPDF
 from datetime import datetime, timedelta
 
 # ========== API Setup ==========
-api_key = st.secrets["openrouter_api_key"]
-model_name = st.secrets["openrouter_model"]
+try:
+    api_key = st.secrets["openrouter_api_key"]
+    model_name = st.secrets["openrouter_model"]
+except KeyError:
+    st.error("❌ API key or model name is missing from Streamlit secrets. Please check `.streamlit/secrets.toml` or Streamlit Cloud settings.")
+    st.stop()
+
 api_base = "https://openrouter.ai/api/v1"
 headers = {
     "Authorization": f"Bearer {api_key}",
@@ -35,11 +40,12 @@ def get_portfolio_allocation(risk):
         "High": {"Equity": 70, "Debt": 20, "Gold": 10}
     }[risk]
 
-# ========== GPT Portfolio Explanation ==========
+# ========== GPT Portfolio Explanation (with error handling) ==========
 def explain_portfolio(allocation, age, risk, goal):
     prompt = f"""
     Act like a professional financial advisor. Explain this portfolio allocation for a {age}-year-old user with {risk} risk tolerance and goal: {goal}.
     The allocation is: Equity: {allocation['Equity']}%, Debt: {allocation['Debt']}%, Gold: {allocation['Gold']}%."""
+    
     payload = {
         "model": model_name,
         "messages": [
@@ -47,8 +53,15 @@ def explain_portfolio(allocation, age, risk, goal):
             {"role": "user", "content": prompt}
         ]
     }
-    response = requests.post(f"{api_base}/chat/completions", headers=headers, json=payload)
-    return response.json()["choices"][0]["message"]["content"]
+
+    try:
+        response = requests.post(f"{api_base}/chat/completions", headers=headers, json=payload)
+        response_json = response.json()
+        return response_json["choices"][0]["message"]["content"]
+    except Exception as e:
+        st.error("❌ Failed to get a valid response from the AI model.")
+        st.code(response.text)
+        return "⚠️ Unable to generate portfolio explanation due to a system error."
 
 # ========== CAGR Fetcher ==========
 def fetch_cagr(ticker, years=5):
