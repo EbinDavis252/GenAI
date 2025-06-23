@@ -1,6 +1,6 @@
 streamlit
 plotly
+pandas
 yfinance
 fpdf
-pandas
 requests
